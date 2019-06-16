@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html>
+	<head>
+		<meta charset="utf-8">
+		<title>wdh</title>
+		<script src='https://threejs.org/build/three.min.js'></script>
+		<script src='https://code.jquery.com/jquery-3.4.1.min.js'></script>
+		
+		<style>
+			body {
+				margin: 0;
+				overflow: hidden;
+			}
+		</style>
+	</head>
+
+	<body>
+		<div id='WebGL-output'></div>
+	</body>
+	
+	<script>
+		var ACTION_QUEUE = [];
+		var LAST_T = null;				// 上一次更新界面时的时间戳，毫秒
+		var START_T = null;
+		var if_animate = false;
+	
+		// three.js  坐标系为 右手系
+		var render = null;
+		var camera = null;
+		var scene = null;
+		
+		// vector, p - three.Vector3, 
+		// vector - 非单位向量; p - 旋转轴经过点
+		// theta - 转动角度，角度制
+		function rot_around_axis( object, vector, p, theta ) {
+			var nv = vector.normalize();
+			var m_t_p = new THREE.Matrix4();
+			var m_rot = new THREE.Matrix4();
+			var new_M = new THREE.Matrix4();
+			
+			m_t_p.setPosition( p.negate() );
+			m_rot.makeRotationAxis( nv, theta/180*Math.PI ) ;
+			new_M.setPosition( p.negate() ).multiply( m_rot ).multiply( m_t_p ).multiply( object.matrixWorld );
+			
+			object.matrix = new_M;
+		}
+			
+		// 速度v从0以二次曲线达到峰值v_max，然后再给定时间 t0 内降为0
+		// 速度曲线的标准格式为 a*t(t-t0)
+		// 保证时间 t0 内移动距离为 S
+		function get_v_a( t0, S ) {
+			return -6*S / Math.pow(t0, 3);
+		}
+		
+		// 速度曲线为 a*t(t-t0)， t秒后行进的距离
+		function get_cur_S( a, t ) {
+			return a*Math.pow(t, 3) / -6;
+		}
+		
+		// status - { 'acts':[], 'i':当前执行的动作 }
+		function actions_list( dur_t, t_detla, G_name ) {
+			var status = this.G[G_name];
+			var acts_len = status.acts.length;
+			if ( status.i>=acts_len )
+				return false;
+				
+			var i = status.i;
+			var obj = status.acts[i][0];
+			var fun = status.acts[i][1];
+			var params = [dur_t, t_delta];
+			params.push( status.acts[i][2] );
+			var res = fun.apply( obj, params );
+			
+			if (res==false) status.i++;
+			return true;
+		}
+		
+		
+		function wdh_object( object ) {
+			this.object = object.clone();
+			scene.add( this.object );
+			this.object.matrixAutoUpdate = false;
+		
+			this.G = { 'init':this.object.matrixWorld.clone() };
+		
+			// 该函数使用先加速再减速的方式进行物体移动
+			// status - { 'move':xxx(vector3), 'usage_t':xx(秒) }
+			// 会自动向 states 中增加:
+			// 		start_t:		秒
+			//		a:				与速度峰值有关的系数
+			//		start_M:		执行该动作时的初始位置矩阵
+			//		start_pos:		执行该动作时的初始位置向量
+			//		move_nv:		归一化的 move 向量
+			// move - x,y,z的移动距离
+			this.move = function( dur_t, t_detla, G_name ) {
+				var status = this.G[G_name];
+				var now = Date.now() / 1000;
+				if ( !status.hasOwnProperty('start_t') ) {
+					status.start_t = now;
+					
+					var pos = new THREE.Vector3();
+					var scale = new THREE.Vector3();
+					var quaternion = new THREE.Quaternion();
+					this.object.matrixWorld.decompose( pos, quaternion, scale );
+					var S = status.move.length();
+					status.a = get_v_a( status.usage_t, S )
+					status.start_M = this.object.matrixWorld.clone();
+					status.move_nv = status.move.clone().normalize();
+					status.start_pos = pos;
+					return true;
+				}
+	
+				var ut = now - status.start_t;
+				if ( ut<=status.usage_t ) {
+					var now_S = get_cur_S( status.a, ut );
+					var now_pos = status.move_nv.clone().multiplyScalar( now_S );
+					var M = status.start_M.clone().setPosition( status.start_pos.clone().add(now_pos) );
+					this.object.matrix.copy( M );
+					return true;
+				}
+				else {
+					var M = status.start_M.clone().setPosition( status.start_pos.clone().add(status.move) );
+					this.object.matrix.copy( M );
+					delete this.G[G_name];
+					return false;
+				}
+			};
+			/*
+			// status - { 'acts':[], 'i':当前执行的动作 }
+			this.actions_list = function( dur_t, t_detla, G_name ) {
+				var status = this.G[G_name];
+				var acts_len = status.acts.length;
+				if ( status.i>=acts_len )
+					return false;
+					
+				var i = status.i;
+				var obj = status.acts[i][0];
+				var fun = status.acts[i][1];
+				var params = [dur_t, t_delta];
+				params.push( status.acts[i][2] );
+				var res = fun.apply( obj, params );
+				
+				if (res==false) status.i++;
+				return true;	
+			};
+			*/
+		}
+	
+		var animate = function () {		
+			if ( ACTION_QUEUE.length==0 ) {
+				if_animate = false;
+				return 'if_animate is false';
+			}
+			
+			var now = Date.now();
+			if ( START_T==null )
+				START_T = now;
+			
+			if ( LAST_T==null )
+				t_delta = 0;
+			else
+				t_delta = now - LAST_T;
+				
+			LAST_T = now;
+			var dur_t = now - START_T;
+	
+			var mid_queue = [];
+			for (let pack of ACTION_QUEUE ) {
+				var obj = pack[0];
+				var fun = pack[1];
+				var params = [dur_t, t_delta];
+				params.push( pack[2] );
+			
+				var res = fun.apply( obj, params );
+				if ( res )
+					mid_queue.push( pack )
+			}
+			
+			ACTION_QUEUE = mid_queue;
+			renderer.render( scene, camera );
+			requestAnimationFrame( animate );
+		}
+
+	</script>	
+		
+	<script>
+		function init() {
+			scene = new THREE.Scene();
+			camera = new THREE.PerspectiveCamera( 45, window.innerWidth/window.innerHeight, 0.1, 1000 );
+ 
+			camera.position.x = -30;
+			camera.position.y = 40;
+			camera.position.z = 30;
+			camera.lookAt( scene.position );
+			
+			renderer = new THREE.WebGLRenderer();
+			renderer.setClearColor( new THREE.Color(0xEEEEEE) );
+			renderer.setSize( window.innerWidth, window.innerHeight );
+			
+			//添加环境光
+			var ambientLight = new THREE.AmbientLight( 0x0c0c0c );
+			scene.add( ambientLight );
+			
+			//添加聚光灯光源
+			var spotLight = new THREE.SpotLight( 0xffffff );
+			spotLight.position.set( -30, 60, -10 );
+			spotLight.castShadow = true;
+			scene.add( spotLight );
+
+		
+			var cubeGeometry = new THREE.BoxGeometry( 4, 4, 4 );
+			var cubeMaterial = new THREE.MeshBasicMaterial( {color:0xff0000, wireframe:false} );
+			cube = new THREE.Mesh( cubeGeometry, cubeMaterial );
+			cube.position.x = 0;
+			cube.position.y = 0;
+			cube.position.z = 0;
+			scene.add( cube );
+		
+			var sphereGeometry = new THREE.SphereGeometry( 4, 20, 20 );
+			var sphereMaterial = new THREE.MeshBasicMaterial( {color:0x7777ff, wireframe:true} );
+			sphere = new THREE.Mesh( sphereGeometry, sphereMaterial );
+			sphere.position.x = 0;
+			sphere.position.y = 0;
+			sphere.position.z = 0;
+			scene.add( sphere );
+		
+			var planeGeometry = new THREE.PlaneGeometry( 60, 30, 1, 1 );
+			var planeMaterial = new THREE.MeshLambertMaterial( {color: 0xffffff} );
+			var plane = new THREE.Mesh(planeGeometry, planeMaterial);
+			plane.receiveShadow = true;
+			plane.rotation.x = -0.5 * Math.PI;
+			plane.position.x = 0;
+			plane.position.y = 0;
+			plane.position.z = 0;
+			scene.add( plane );
+			
+			$('#WebGL-output')[0].appendChild( renderer.domElement );
+			renderer.render( scene, camera );
+		}	
+	</script>
+	
+	<script>
+		$( function() {
+			init();
+			wdh_cube = new wdh_object( cube );
+			//wdh_cube.G.move = { 'move':new THREE.Vector3(20,6,6), 'usage_t':0.7 };
+			//ACTION_QUEUE.push( [wdh_cube, wdh_cube.move, 'move'] );
+		
+			wdh_cube.G.acts_list = { 'acts':[], 'i':0 };
+
+			wdh_cube.G.act_1 = { 'move':new THREE.Vector3(20,0,0), 'usage_t':0.2 };
+			wdh_cube.G.acts_list.acts.push( [wdh_cube, wdh_cube.move, 'act_1'] );
+			
+			wdh_cube.G.act_2 = { 'move':new THREE.Vector3(-20,0,0), 'usage_t':0.3 };
+			wdh_cube.G.acts_list.acts.push( [wdh_cube, wdh_cube.move, 'act_2'] );
+			
+			wdh_cube.G.act_3 = { 'move':new THREE.Vector3( 16,0,0), 'usage_t':0.4 };
+			wdh_cube.G.acts_list.acts.push( [wdh_cube, wdh_cube.move, 'act_3'] );
+			
+			wdh_cube.G.act_4 = { 'move':new THREE.Vector3( -16,0,0), 'usage_t':0.4 };
+			wdh_cube.G.acts_list.acts.push( [wdh_cube, wdh_cube.move, 'act_4'] );
+			
+			//ACTION_QUEUE.push( [wdh_cube, wdh_cube.actions_list, 'acts_list'] );
+			ACTION_QUEUE.push( [wdh_cube, actions_list, 'acts_list'] );
+			
+			animate();
+		} )
+	</script>
+	
+</html>
