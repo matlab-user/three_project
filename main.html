@@ -75,77 +75,79 @@
 			return true;
 		}
 		
-		
-		function wdh_object( object ) {
-			this.object = object.clone();
-			scene.add( this.object );
-			this.object.matrixAutoUpdate = false;
-		
-			this.G = { 'init':this.object.matrixWorld.clone() };
-		
-			// 该函数使用先加速再减速的方式进行物体移动
-			// status - { 'move':xxx(vector3), 'usage_t':xx(秒) }
-			// 会自动向 states 中增加:
-			// 		start_t:		秒
-			//		a:				与速度峰值有关的系数
-			//		start_M:		执行该动作时的初始位置矩阵
-			//		start_pos:		执行该动作时的初始位置向量
-			//		move_nv:		归一化的 move 向量
-			// move - x,y,z的移动距离
-			this.move = function( dur_t, t_detla, G_name ) {
-				var status = this.G[G_name];
-				var now = Date.now() / 1000;
-				if ( !status.hasOwnProperty('start_t') ) {
-					status.start_t = now;
-					
-					var pos = new THREE.Vector3();
-					var scale = new THREE.Vector3();
-					var quaternion = new THREE.Quaternion();
-					this.object.matrixWorld.decompose( pos, quaternion, scale );
-					var S = status.move.length();
-					status.a = get_v_a( status.usage_t, S )
-					status.start_M = this.object.matrixWorld.clone();
-					status.move_nv = status.move.clone().normalize();
-					status.start_pos = pos;
-					return true;
-				}
-	
-				var ut = now - status.start_t;
-				if ( ut<=status.usage_t ) {
-					var now_S = get_cur_S( status.a, ut );
-					var now_pos = status.move_nv.clone().multiplyScalar( now_S );
-					var M = status.start_M.clone().setPosition( status.start_pos.clone().add(now_pos) );
-					this.object.matrix.copy( M );
-					return true;
-				}
-				else {
-					var M = status.start_M.clone().setPosition( status.start_pos.clone().add(status.move) );
-					this.object.matrix.copy( M );
-					delete this.G[G_name];
-					return false;
-				}
-			};
-			/*
-			// status - { 'acts':[], 'i':当前执行的动作 }
-			this.actions_list = function( dur_t, t_detla, G_name ) {
-				var status = this.G[G_name];
-				var acts_len = status.acts.length;
-				if ( status.i>=acts_len )
-					return false;
-					
-				var i = status.i;
-				var obj = status.acts[i][0];
-				var fun = status.acts[i][1];
-				var params = [dur_t, t_delta];
-				params.push( status.acts[i][2] );
-				var res = fun.apply( obj, params );
-				
-				if (res==false) status.i++;
-				return true;	
-			};
-			*/
+		// 该函数使用先加速再减速的方式进行物体移动
+		// status - { 'move':xxx(vector3), 'usage_t':xx(秒) }
+		// 会自动向 states 中增加:
+		// 		start_t:		秒
+		//		a:				与速度峰值有关的系数
+		//		start_M:		执行该动作时的初始位置矩阵
+		//		start_pos:		执行该动作时的初始位置向量
+		//		move_nv:		归一化的 move 向量
+		// move - x,y,z的移动距离
+		function smooth_motion( dur_t, t_detla, G_name ) {
+			var status = this.G[ G_name ];
+			var now = Date.now() / 1000;
+			if ( !status.hasOwnProperty('start_t') ) {
+				status.start_t = now;
+				var pos = new THREE.Vector3();
+				var scale = new THREE.Vector3();
+				var quaternion = new THREE.Quaternion();
+				this.object.matrixWorld.decompose( pos, quaternion, scale );
+				var S = status.move.length();
+				status.a = get_v_a( status.usage_t, S )
+				status.start_M = this.object.matrixWorld.clone();
+				status.move_nv = status.move.clone().normalize();
+				status.start_pos = pos;
+				return true;
+			}
+
+			var ut = now - status.start_t;
+			if ( ut<=status.usage_t ) {
+				var now_S = get_cur_S( status.a, ut );
+				var now_pos = status.move_nv.clone().multiplyScalar( now_S );
+				var M = status.start_M.clone().setPosition( status.start_pos.clone().add(now_pos) );
+				this.object.matrix.copy( M );
+				return true;
+			}
+			else {
+				var M = status.start_M.clone().setPosition( status.start_pos.clone().add(status.move) );
+				this.object.matrix.copy( M );
+				delete this.G[G_name];
+				return false;
+			}
 		}
-	
+		
+		// params - { 'move':(第一次运动向量，vector3), 'usage_t':xx(秒), 'times':晃动次数 }
+		// 根据 i 值自动对 move 反向
+		function shake( wdh_object_instance, params ) {
+			var act_blocks = [];
+			for( var i=0; i<params.times; i++ ) {
+				var n = 'act_' + i;
+				action_init( wdh_object_instance, n, {'move':params.move.clone(), 'usage_t':params.usage_t} );
+				act_blocks.push( [wdh_object_instance, smooth_motion, n] );
+				params.move.negate();
+			}
+			
+			action_init( wdh_object_instance, 'acts_list', {'acts':act_blocks, 'i':0} );
+			start_animate_loop( [[ wdh_object_instance, actions_list, 'acts_list']] );
+		}
+		
+		
+		// 初始化动作参数，以运行某实例的制定动作
+		// wdh_object_instance.G[G_name] = params
+		function action_init( wdh_object_instance, G_name, params ) {
+			wdh_object_instance.G[G_name] = params;
+		}
+		
+		// act_blocks - [ [], [], .... ]
+		function start_animate_loop( act_blocks ) {
+			ACTION_QUEUE = ACTION_QUEUE.concat( act_blocks );
+			if ( if_animate==false ) { 
+				if_animate = true;
+				animate();
+			}
+		}
+		
 		var animate = function () {		
 			if ( ACTION_QUEUE.length==0 ) {
 				if_animate = false;
@@ -181,6 +183,16 @@
 			requestAnimationFrame( animate );
 		}
 
+		//------------------------------------------------------------------------------------
+		function wdh_object( object, position=null ) {
+			this.object = object.clone();
+			scene.add( this.object );
+			this.object.matrixAutoUpdate = false;
+		
+			this.G = { 'init':this.object.matrixWorld.clone() };
+			this.move = smooth_motion;
+		}
+		
 	</script>	
 		
 	<script>
@@ -243,27 +255,23 @@
 		$( function() {
 			init();
 			wdh_cube = new wdh_object( cube );
-			//wdh_cube.G.move = { 'move':new THREE.Vector3(20,6,6), 'usage_t':0.7 };
-			//ACTION_QUEUE.push( [wdh_cube, wdh_cube.move, 'move'] );
-		
-			wdh_cube.G.acts_list = { 'acts':[], 'i':0 };
-
-			wdh_cube.G.act_1 = { 'move':new THREE.Vector3(20,0,0), 'usage_t':0.2 };
-			wdh_cube.G.acts_list.acts.push( [wdh_cube, wdh_cube.move, 'act_1'] );
+			/*
+			action_init( wdh_cube, 'act_1', {'move':new THREE.Vector3(20,0,0), 'usage_t':0.2} );
+			action_init( wdh_cube, 'act_2', {'move':new THREE.Vector3(-20,0,0), 'usage_t':0.3} );
+			action_init( wdh_cube, 'act_3', {'move':new THREE.Vector3(16,0,0), 'usage_t':0.4} );
+			action_init( wdh_cube, 'act_4', {'move':new THREE.Vector3(-16,0,0), 'usage_t':0.4} );
 			
-			wdh_cube.G.act_2 = { 'move':new THREE.Vector3(-20,0,0), 'usage_t':0.3 };
-			wdh_cube.G.acts_list.acts.push( [wdh_cube, wdh_cube.move, 'act_2'] );
+			var act_blocks = [];
+			act_blocks.push( [wdh_cube, wdh_cube.move, 'act_1'] );
+			act_blocks.push( [wdh_cube, wdh_cube.move, 'act_2'] );
+			act_blocks.push( [wdh_cube, wdh_cube.move, 'act_3'] );
+			act_blocks.push( [wdh_cube, wdh_cube.move, 'act_4'] );
+			action_init( wdh_cube, 'acts_list', {'acts':act_blocks, 'i':0} );
 			
-			wdh_cube.G.act_3 = { 'move':new THREE.Vector3( 16,0,0), 'usage_t':0.4 };
-			wdh_cube.G.acts_list.acts.push( [wdh_cube, wdh_cube.move, 'act_3'] );
+			start_animate_loop( [[wdh_cube, actions_list, 'acts_list']] );
+			*/
 			
-			wdh_cube.G.act_4 = { 'move':new THREE.Vector3( -16,0,0), 'usage_t':0.4 };
-			wdh_cube.G.acts_list.acts.push( [wdh_cube, wdh_cube.move, 'act_4'] );
-			
-			//ACTION_QUEUE.push( [wdh_cube, wdh_cube.actions_list, 'acts_list'] );
-			ACTION_QUEUE.push( [wdh_cube, actions_list, 'acts_list'] );
-			
-			animate();
+			shake( wdh_cube, {'move':new THREE.Vector3(20,4,9), 'times':100,'usage_t':0.2} );
 		} )
 	</script>
 	
