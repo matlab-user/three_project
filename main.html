@@ -6,7 +6,8 @@
 		<script src='https://threejs.org/build/three.min.js'></script>
 		<script src='https://code.jquery.com/jquery-3.4.1.min.js'></script>
 		<script src='js/controls/OrbitControls.js'></script>
-		<script src="js/loaders/GLTFLoader.js"></script>
+		<script src='js/loaders/GLTFLoader.js'></script>
+		<script src='js/objects/Lensflare.js'></script>
 		
 		<style>
 			body {
@@ -267,8 +268,8 @@
 			camera.lookAt( scene.position );
 			
 			renderer = new THREE.WebGLRenderer();	
-			//renderer.physicallyCorrectLights = true;
-			renderer.setClearColor( new THREE.Color(0xEEEEEE) );
+			renderer.physicallyCorrectLights = true;
+			//renderer.setClearColor( new THREE.Color(0xEEEEEE) );
 			renderer.gammaInput = true;
 			renderer.gammaOutput = true;
 			renderer.shadowMap.enabled = true;
@@ -290,8 +291,8 @@
 			controls.update();
 			
 			//添加环境光
-			var ambientLight = new THREE.AmbientLight( 0x0c0c0c );
-			scene.add( ambientLight );
+			//var ambientLight = new THREE.AmbientLight( 0x0c0c0c );
+			//scene.add( ambientLight );
 			
 			//添加聚光灯光源
 			//var spotLight = new THREE.SpotLight( 0xffffff );
@@ -299,21 +300,37 @@
 			//spotLight.castShadow = true;
 			//scene.add( spotLight );
 			
-			hemiLight = new THREE.HemisphereLight( 0xddeeff, 0x0f0e0d, 0.02 );
-			scene.add( hemiLight );
+			//hemiLight = new THREE.HemisphereLight( 0xddeeff, 0x0f0e0d, 0.02 );
+			//scene.add( hemiLight );
 			
-			var bulbGeometry = new THREE.SphereBufferGeometry( 0.02, 16, 8 );
-			bulbLight = new THREE.PointLight( 0xffee88, 1, 100, 2 );
+			//var wdh_sphere = new THREE.SphereBufferGeometry( 1, 16, 8 );
+			var wdh_sphere = new THREE.TorusBufferGeometry( 1, 0.5, 8, 100 );
+			var lensflare = new THREE.Lensflare();
+			
+			var textureLoader = new THREE.TextureLoader();
+			var textureFlare0 = textureLoader.load( 'textures/lensflare/lensflare0.png' );
+			var textureFlare3 = textureLoader.load( 'textures/lensflare/lensflare3.png' );
+			lensflare.addElement( new THREE.LensflareElement( textureFlare0, 512, 0 ) );
+			lensflare.addElement( new THREE.LensflareElement( textureFlare3, 60, 0.6 ) );
+	
+			light1 = new THREE.PointLight( 0xffffee, 1000, 0, 2 );
+			light1.add( new THREE.Mesh( wdh_sphere, new THREE.MeshStandardMaterial( { color: 0xffee88, emissive:0xffffee, emissiveIntensity: 1000} ) ) );
+			light1.add( lensflare );
+			light1.castShadow = true;
+			light1.position.set( 0,20, 0);
+			scene.add( light1 );
+			
+			var bulbGeometry = new THREE.SphereBufferGeometry( 0.2, 16, 8 );
+			bulbLight = new THREE.PointLight( 0xffeecc, 1, 100, 2 );
 			bulbMat = new THREE.MeshStandardMaterial( {
 				emissive: 0xffffee,
 				emissiveIntensity: 1,
 				color: 0x000000
 			} );
 			bulbLight.add( new THREE.Mesh( bulbGeometry, bulbMat ) );
-			bulbLight.position.set( 0, 20, 0 );
+			bulbLight.position.set( 0, 10, 0 );
 			bulbLight.castShadow = true;
 			scene.add( bulbLight );
-			
 				
 			var cubeGeometry = new THREE.BoxGeometry( 4, 4, 4 );
 			var cubeMaterial = new THREE.MeshLambertMaterial( {color:0xff0000, wireframe:false} );
@@ -343,13 +360,26 @@
 			plane.position.z = 0;
 			scene.add( plane );
 			
+			/*
 			var loader = new THREE.GLTFLoader().setPath( './models/' );
 			loader.load( 'Flamingo.glb', function ( gltf ) {
 				gltf.scene.position.x = 20;
 				scene.add( gltf.scene );
 			} );
+			*/
 			
-		
+			var geometry = new THREE.Geometry();
+			geometry.vertices.push(
+				new THREE.Vector3( -10, 0, 0 ),
+				new THREE.Vector3( 0, 10, 0 ),
+				new THREE.Vector3( 10, 0, 0 )
+			);
+			var material = new THREE.LineBasicMaterial({
+				color: 0x0000ff
+			});
+			var line = new THREE.Line( geometry, material );
+			scene.add( line );
+
 			$('#WebGL-output')[0].appendChild( renderer.domElement );
 			renderer.render( scene, camera );
 		}	
@@ -360,7 +390,7 @@
 			init();
 			wdh_cube = new wdh_object( cube );
 			
-			G = { 'rad':0*Math.PI, 'ut':5, 'r_a':new THREE.Vector3(0,1,0) }
+			G = { 'rad':3*Math.PI, 'ut':8, 'r_a':new THREE.Vector3(0,1,0) }
 			look_around( camera, G );
 			
 			$('#WebGL-output').click( function( e ) {
