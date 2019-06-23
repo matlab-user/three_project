@@ -5,6 +5,8 @@
 		<title>wdh</title>
 		<script src='https://threejs.org/build/three.min.js'></script>
 		<script src='https://code.jquery.com/jquery-3.4.1.min.js'></script>
+		<script src='js/controls/OrbitControls.js'></script>
+		<script src="js/loaders/GLTFLoader.js"></script>
 		
 		<style>
 			body {
@@ -22,12 +24,64 @@
 		var ACTION_QUEUE = [];
 		var LAST_T = null;				// 上一次更新界面时的时间戳，毫秒
 		var START_T = null;
-		var if_animate = false;
-	
+		var if_animate = false;		// 动画定时是否在运行中
+		var NEED_RENDER = false;
+		var ALWAYS_RENDER = true;		// ==true, 总是持续渲染（鼠标控制时设置为true）
+		
 		// three.js  坐标系为 右手系
 		var render = null;
 		var camera = null;
 		var scene = null;
+		
+		// G - 环绕观察参数
+		//	st:		开始时间戳
+		//	rad:	转动弧度
+		//	ut:		耗时，秒
+		// 	r_a:	转轴，vector3
+		//	内部使用变量:
+		//		init_p:		初始位置
+		//		end_p:		结束的位置
+		//		speed:		转动速度
+		//		rot_rad:	已经转动的距离
+		function look_around( camera, G ) {
+			// dur_t, t_delta 为毫秒表示的时间
+			function __rot( dur_t, t_delta, G_name ) {
+				var camera = this.object;
+				var G = this.G[ G_name ];
+				//camera.matrixAutoUpdate = false;
+				
+				if ( !G.hasOwnProperty('st') ) {
+					G.st = dur_t;
+					G.init_p = camera.position;
+					G.speed = G.rad / G.ut / 1000;
+					G.rot_rad = 0;
+					
+					var r_vect = new THREE.Vector3( Math.cos(G.rad), 0, Math.sin(G.rad) );
+					var cur_vect = G.init_p.clone();
+					G.end_p = cur_vect.applyAxisAngle( G.r_a , G.rad );
+				}
+				else {
+					var rad_delta = t_delta * G.speed;
+					G.rot_rad += rad_delta;
+					if ( G.rot_rad>G.rad )
+						var cur_vect = G.end_p;
+					else {
+						var r_vect = new THREE.Vector3( Math.cos(rad_delta), 0, Math.sin(rad_delta) );
+						var cur_vect = camera.position.clone();
+						cur_vect.applyAxisAngle( G.r_a, rad_delta );
+					}
+					camera.position.copy( cur_vect );
+					camera.lookAt( scene.position );
+					camera.updateMatrixWorld();
+					if ( G.rot_rad>G.rad )
+						return false;
+				}
+				return true;
+			}
+			
+			var camera_instance = { 'object':camera, 'G':{'rot':G}, 'rot':__rot };
+			start_animate_loop( [ [camera_instance, camera_instance.rot, 'rot'] ] );
+		}
 		
 		// vector, p - three.Vector3, 
 		// vector - 非单位向量; p - 旋转轴经过点
@@ -139,17 +193,21 @@
 			wdh_object_instance.G[G_name] = params;
 		}
 		
-		// act_blocks - [ [], [], .... ]
-		function start_animate_loop( act_blocks ) {
-			ACTION_QUEUE = ACTION_QUEUE.concat( act_blocks );
-			if ( if_animate==false ) { 
+		// act_blocks - [ [object, act_fun, params_name], [], .... ]
+		function start_animate_loop( act_blocks=null ) {
+			if ( act_blocks!=null ) {
+				ACTION_QUEUE = ACTION_QUEUE.concat( act_blocks );
+				NEED_RENDER = true;
+			}
+			
+			if ( if_animate==false && NEED_RENDER==true || ALWAYS_RENDER==true ) { 
 				if_animate = true;
 				animate();
 			}
 		}
 		
-		var animate = function () {		
-			if ( ACTION_QUEUE.length==0 ) {
+		var animate = function () {
+			if ( ACTION_QUEUE.length==0 && NEED_RENDER==false && ALWAYS_RENDER==false ) {
 				if_animate = false;
 				return 'if_animate is false';
 			}
@@ -165,7 +223,7 @@
 				
 			LAST_T = now;
 			var dur_t = now - START_T;
-	
+			
 			var mid_queue = [];
 			for (let pack of ACTION_QUEUE ) {
 				var obj = pack[0];
@@ -179,8 +237,11 @@
 			}
 			
 			ACTION_QUEUE = mid_queue;
+			controls.update();
 			renderer.render( scene, camera );
+			NEED_RENDER = false;
 			requestAnimationFrame( animate );
+			
 		}
 
 		//------------------------------------------------------------------------------------
@@ -198,29 +259,62 @@
 	<script>
 		function init() {
 			scene = new THREE.Scene();
+			
 			camera = new THREE.PerspectiveCamera( 45, window.innerWidth/window.innerHeight, 0.1, 1000 );
- 
 			camera.position.x = -30;
 			camera.position.y = 40;
 			camera.position.z = 30;
 			camera.lookAt( scene.position );
 			
-			renderer = new THREE.WebGLRenderer();
+			renderer = new THREE.WebGLRenderer();	
+			//renderer.physicallyCorrectLights = true;
+			renderer.setClearColor( new THREE.Color(0xEEEEEE) );
+			renderer.gammaInput = true;
+			renderer.gammaOutput = true;
+			renderer.shadowMap.enabled = true;
+			renderer.toneMapping = THREE.ReinhardToneMapping;
+			renderer.setPixelRatio( window.devicePixelRatio );
+			renderer.setSize( window.innerWidth, window.innerHeight );
+			/*
+			//renderer.physicallyCorrectLights = true;
 			renderer.setClearColor( new THREE.Color(0xEEEEEE) );
 			renderer.setSize( window.innerWidth, window.innerHeight );
-			renderer.shadowMapEnabled = true;
-			renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+			renderer.shadowMap.enabled = true;
+			//renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+			//renderer.toneMapping = THREE.ReinhardToneMapping;
+			renderer.setPixelRatio( window.devicePixelRatio );
+			*/
+		
+			controls = new THREE.OrbitControls( camera, renderer.domElement );
+			controls.maxPolarAngle = Math.PI / 2;
+			controls.update();
 			
 			//添加环境光
 			var ambientLight = new THREE.AmbientLight( 0x0c0c0c );
 			scene.add( ambientLight );
 			
 			//添加聚光灯光源
-			var spotLight = new THREE.SpotLight( 0xffffff );
-			spotLight.position.set( -40, 60, -10 );
-			spotLight.castShadow = true;
-			scene.add( spotLight );
+			//var spotLight = new THREE.SpotLight( 0xffffff );
+			//spotLight.position.set( -40, 60, -10 );
+			//spotLight.castShadow = true;
+			//scene.add( spotLight );
 			
+			hemiLight = new THREE.HemisphereLight( 0xddeeff, 0x0f0e0d, 0.02 );
+			scene.add( hemiLight );
+			
+			var bulbGeometry = new THREE.SphereBufferGeometry( 0.02, 16, 8 );
+			bulbLight = new THREE.PointLight( 0xffee88, 1, 100, 2 );
+			bulbMat = new THREE.MeshStandardMaterial( {
+				emissive: 0xffffee,
+				emissiveIntensity: 1,
+				color: 0x000000
+			} );
+			bulbLight.add( new THREE.Mesh( bulbGeometry, bulbMat ) );
+			bulbLight.position.set( 0, 20, 0 );
+			bulbLight.castShadow = true;
+			scene.add( bulbLight );
+			
+				
 			var cubeGeometry = new THREE.BoxGeometry( 4, 4, 4 );
 			var cubeMaterial = new THREE.MeshLambertMaterial( {color:0xff0000, wireframe:false} );
 			cube = new THREE.Mesh( cubeGeometry, cubeMaterial );
@@ -240,7 +334,7 @@
 			scene.add( sphere );
 		
 			var planeGeometry = new THREE.PlaneGeometry( 60, 30, 1, 1 );
-			var planeMaterial = new THREE.MeshLambertMaterial( {color: 0xffffff} );
+			var planeMaterial = new THREE.MeshStandardMaterial( {color: 0xffffff,roughness: 0.8, metalness: 0.2, bumpScale: 0.0005} );
 			var plane = new THREE.Mesh(planeGeometry, planeMaterial);
 			plane.receiveShadow = true;
 			plane.rotation.x = -0.5 * Math.PI;
@@ -249,6 +343,13 @@
 			plane.position.z = 0;
 			scene.add( plane );
 			
+			var loader = new THREE.GLTFLoader().setPath( './models/' );
+			loader.load( 'Flamingo.glb', function ( gltf ) {
+				gltf.scene.position.x = 20;
+				scene.add( gltf.scene );
+			} );
+			
+		
 			$('#WebGL-output')[0].appendChild( renderer.domElement );
 			renderer.render( scene, camera );
 		}	
@@ -258,6 +359,44 @@
 		$( function() {
 			init();
 			wdh_cube = new wdh_object( cube );
+			
+			G = { 'rad':0*Math.PI, 'ut':5, 'r_a':new THREE.Vector3(0,1,0) }
+			look_around( camera, G );
+			
+			$('#WebGL-output').click( function( e ) {
+				e.preventDefault();
+			
+				var self = $( this );
+				var W = self.innerWidth();
+				var H = self.innerHeight();
+							
+				var x = ( e.pageX / W ) * 2 - 1;
+				var y = -( e.pageY / H ) * 2 + 1;	
+				var vet = new THREE.Vector3( x, y, 0.5 );
+				
+				var objects = [sphere, cube, wdh_cube.object];
+				
+				vet = vet.unproject( camera );
+				console.log( 'need_render:', NEED_RENDER, 'if_animate:', if_animate );
+				
+				var raycaster = new THREE.Raycaster( camera.position, vet.sub(camera.position).normalize() );		
+				var intersects = raycaster.intersectObjects( objects );
+				if ( intersects.length>0 ) {
+					intersects[0].object.material.transparent = true;
+					intersects[0].object.material.opacity = 0.2;
+					NEED_RENDER = true;
+				}
+				else {
+					objects.forEach( function( item ) {
+						item.material.opacity = 1;
+						NEED_RENDER = true;
+					} )
+				}
+				
+				if ( NEED_RENDER==true )
+					start_animate_loop();
+			} );
+			
 			/*
 			action_init( wdh_cube, 'act_1', {'move':new THREE.Vector3(20,0,0), 'usage_t':0.2} );
 			action_init( wdh_cube, 'act_2', {'move':new THREE.Vector3(-20,0,0), 'usage_t':0.3} );
@@ -274,7 +413,7 @@
 			start_animate_loop( [[wdh_cube, actions_list, 'acts_list']] );
 			*/
 			
-			shake( wdh_cube, {'move':new THREE.Vector3(20,8,9), 'times':1,'usage_t':1} );
+			shake( wdh_cube, {'move':new THREE.Vector3(20,8,9), 'times':8,'usage_t':1} );
 		} )
 	</script>
 	
