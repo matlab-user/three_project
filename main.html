@@ -99,7 +99,90 @@
 			
 			object.matrix = new_M;
 		}
+		
+		
+		function swinging_fun( dur_t, t_detla, G_name ) {
+			var status = this.G[G_name];	
+			var ut = ( Date.now() - status.start_t ) / 1000;
+			if ( ut<=status.usage_t ) {
+				var should_rad = status.speed * ut;
+				var rot_rad = should_rad - status.cur_rad;
+				
+				rot_around_axis( this.object, status.rot_axis, status.world_p, rot_rad/Math.PI*180 );
+				status.cur_rad += rot_rad;
+
+				return true;
+			}
+			else {
+				var rot_rad = status.rad - status.cur_rad;
+				rot_around_axis( this.object, status.rot_axis, status.world_p, rot_rad/Math.PI*180 );
+				status.cur_times++;
+				
+				if ( status.times>0 )
+					if ( status.cur_times>=status.times )
+						return false
+					else {
+						var times = status.times, p = status.p, usage_t = 3, max_a = Math.random()*20, cur_times = status.cur_times;
+						var params = { p:p, times:times, max_a:max_a, usage_t:usage_t, cur_times:cur_times };
+					}
+				else {
+					var times = -1, p = status.p, usage_t = 3, max_a = Math.random()*20;
+					var params = { p:p, times:times, max_a:max_a, usage_t:usage_t };
+				}
+				
+				delete this.G[G_name];
+				params = init_swinging_params( this, params );
+				action_init( this, 'swinging', params );
+				start_animate_loop( [[ this, swinging_fun, 'swinging']] );
+				return true;
+			}
+		}
 			
+		
+		function init_swinging_params( wdh_object_instance, params ) {
+			var a = params.max_a / 180 * Math.PI;
+			params.max_r = Math.sin( a );
+			
+			if ( !params.hasOwnProperty('cur_times') )
+				params.cur_times = 0;
+			
+			var c_axis = new THREE.Vector3( 0, 1, 0 ), m4 = new THREE.Matrix4();
+			var xa = new THREE.Vector3(), ya = new THREE.Vector3(), za = new THREE.Vector3();
+			wdh_object_instance.object.matrixWorld.extractBasis ( xa, ya, za ); 
+			m4.makeBasis( xa, ya, za );			
+			c_axis.applyMatrix4( m4 );
+		
+			var mid_a = Math.random() * 2 * Math.PI;
+			var mx = params.max_r * Math.cos( mid_a ), mz = params.max_r * Math.sin( mid_a );
+			var init_axis = c_axis, end_axis = new THREE.Vector3( mx, Math.cos(a), mz );	
+			
+			params.rad = init_axis.angleTo( end_axis );		
+			params.rot_axis = init_axis.cross( end_axis );
+			params.cur_rad = 0;
+			params.speed = params.rad / params.usage_t;
+			params.world_p = params.p.applyMatrix4( wdh_object_instance.object.matrixWorld );
+			params.start_t = Date.now();
+			
+			return params;
+		}
+		
+		// params - { p:转轴经过点(以物体自身坐标系定义，Vector3), max_a:最大晃动半锥角-角度, times:晃动次数, usage_t:单次动作耗时(秒)-和速度相关 }
+		// 以下参数为函数自动添加
+		// cur_times	当前动作发生次数
+		// rot_axis		当前晃动转动轴, 非单位向量
+		// start_t		开始时间, 毫秒
+		// rad			需要转动的弧度
+		// cur_rad		当前已转动弧度
+		// speed		运动速度，以每秒
+		// max_r		满足半锥角的最大x、y数值
+		// world_p		转轴经过点在世界坐标系中的坐标，Vector3
+		function swinging( wdh_object_instance, params ) {
+			init_swinging_params( wdh_object_instance, params );
+			action_init( wdh_object_instance, 'swinging', params );
+			start_animate_loop( [[ wdh_object_instance, swinging_fun, 'swinging']] );
+		}
+		
+		
 		// 速度v从0以二次曲线达到峰值v_max，然后再给定时间 t0 内降为0
 		// 速度曲线的标准格式为 a*t(t-t0)
 		// 保证时间 t0 内移动距离为 S
@@ -242,7 +325,6 @@
 			renderer.render( scene, camera );
 			NEED_RENDER = false;
 			requestAnimationFrame( animate );
-			
 		}
 
 		//------------------------------------------------------------------------------------
@@ -379,6 +461,27 @@
 			});
 			var line = new THREE.Line( geometry, material );
 			scene.add( line );
+			
+			
+			var geometry = new THREE.Geometry();
+			geometry.vertices.push(
+				new THREE.Vector3( 0, 0, 0 ),
+				new THREE.Vector3( 0, 15, 0 ),
+			);
+			var material = new THREE.LineBasicMaterial({
+				color: 0xff00ff
+			});
+			swing_line = new THREE.Line( geometry, material );
+			
+			for ( var i=0; i<100; i++ ) {
+				var geometry = new THREE.Geometry();
+				geometry.vertices.push(
+					new THREE.Vector3( 0, 0, 0 ),
+					new THREE.Vector3( (Math.random()*2-1)*1, 15, (Math.random()*2-1)*1 ),
+				);
+				swing_line.add( new THREE.Line(geometry, material) );
+			}
+			
 
 			$('#WebGL-output')[0].appendChild( renderer.domElement );
 			renderer.render( scene, camera );
@@ -388,10 +491,13 @@
 	<script>
 		$( function() {
 			init();
+			//console.log( cube.geometry.vertices[0] );
+			//console.log( cube.geometry.faces );
+			//return;
 			wdh_cube = new wdh_object( cube );
 			
-			G = { 'rad':3*Math.PI, 'ut':8, 'r_a':new THREE.Vector3(0,1,0) }
-			look_around( camera, G );
+			//G = { 'rad':3*Math.PI, 'ut':8, 'r_a':new THREE.Vector3(0,1,0) }
+			//look_around( camera, G );
 			
 			$('#WebGL-output').click( function( e ) {
 				e.preventDefault();
@@ -407,7 +513,7 @@
 				var objects = [sphere, cube, wdh_cube.object];
 				
 				vet = vet.unproject( camera );
-				console.log( 'need_render:', NEED_RENDER, 'if_animate:', if_animate );
+				//console.log( 'need_render:', NEED_RENDER, 'if_animate:', if_animate );
 				
 				var raycaster = new THREE.Raycaster( camera.position, vet.sub(camera.position).normalize() );		
 				var intersects = raycaster.intersectObjects( objects );
@@ -443,7 +549,11 @@
 			start_animate_loop( [[wdh_cube, actions_list, 'acts_list']] );
 			*/
 			
-			shake( wdh_cube, {'move':new THREE.Vector3(20,8,9), 'times':8,'usage_t':1} );
+			//shake( wdh_cube, {'move':new THREE.Vector3(20,8,9), 'times':8,'usage_t':1} );
+			
+			wdh_swing_line = new wdh_object( swing_line );
+			var params = { p:new THREE.Vector3(0,0,0), times:100, max_a:10, usage_t:1 }
+			swinging( wdh_swing_line, params );
 		} )
 	</script>
 	
