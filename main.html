@@ -8,6 +8,7 @@
 		<script src='js/controls/OrbitControls.js'></script>
 		<script src='js/loaders/GLTFLoader.js'></script>
 		<script src='js/objects/Lensflare.js'></script>
+		<script src="js/libs/stats.min.js"></script>
 		
 		<style>
 			body {
@@ -19,6 +20,7 @@
 
 	<body>
 		<div id='WebGL-output'></div>
+		<div id='container'></div>
 	</body>
 	
 	<script>
@@ -33,6 +35,8 @@
 		var render = null;
 		var camera = null;
 		var scene = null;
+		
+		var container, stats;
 		
 		// G - 环绕观察参数
 		//	st:		开始时间戳
@@ -96,14 +100,18 @@
 			m_t_p.setPosition( p.negate() );
 			m_rot.makeRotationAxis( nv, theta/180*Math.PI ) ;
 			new_M.setPosition( p.negate() ).multiply( m_rot ).multiply( m_t_p ).multiply( object.matrixWorld );
-			
-			object.matrix = new_M;
+			object.matrix.copy( new_M );
 		}
 		
 		
 		function swinging_fun( dur_t, t_detla, G_name ) {
-			var status = this.G[G_name];	
-			var ut = ( Date.now() - status.start_t ) / 1000;
+			var status = this.G[G_name];
+			if ( !status.hasOwnProperty('start_t') ) {
+				status.start_t = Date.now() / 1000;
+				return true;
+			}
+			
+			var ut = Date.now()/1000 - status.start_t;
 			if ( ut<=status.usage_t ) {
 				var should_rad = status.speed * ut;
 				var rot_rad = should_rad - status.cur_rad;
@@ -130,10 +138,8 @@
 					var params = { p:p, times:times, max_a:max_a, usage_t:usage_t };
 				}
 				
-				delete this.G[G_name];
 				params = init_swinging_params( this, params );
-				action_init( this, 'swinging', params );
-				start_animate_loop( [[ this, swinging_fun, 'swinging']] );
+				action_init( this, G_name, params );
 				return true;
 			}
 		}
@@ -160,9 +166,8 @@
 			params.rot_axis = init_axis.cross( end_axis );
 			params.cur_rad = 0;
 			params.speed = params.rad / params.usage_t;
-			params.world_p = params.p.applyMatrix4( wdh_object_instance.object.matrixWorld );
-			params.start_t = Date.now();
-			
+			params.world_p = params.p.clone().applyMatrix4( wdh_object_instance.object.matrixWorld );
+	
 			return params;
 		}
 		
@@ -177,8 +182,8 @@
 		// max_r		满足半锥角的最大x、y数值
 		// world_p		转轴经过点在世界坐标系中的坐标，Vector3
 		function swinging( wdh_object_instance, params ) {
-			init_swinging_params( wdh_object_instance, params );
-			action_init( wdh_object_instance, 'swinging', params );
+			var new_params = init_swinging_params( wdh_object_instance, params );
+			action_init( wdh_object_instance, 'swinging', new_params );
 			start_animate_loop( [[ wdh_object_instance, swinging_fun, 'swinging']] );
 		}
 		
@@ -320,19 +325,26 @@
 					mid_queue.push( pack )
 			}
 			
+			console.log( mid_queue.length );
 			ACTION_QUEUE = mid_queue;
-			controls.update();
+			//controls.update();
 			renderer.render( scene, camera );
 			NEED_RENDER = false;
+			stats.update();
 			requestAnimationFrame( animate );
 		}
 
 		//------------------------------------------------------------------------------------
 		function wdh_object( object, position=null ) {
 			this.object = object.clone();
-			scene.add( this.object );
 			this.object.matrixAutoUpdate = false;
-		
+			
+			if ( position!=null ) {
+				this.object.position.copy( position );
+				this.object.updateMatrix();
+			}
+			scene.add( this.object );
+			
 			this.G = { 'init':this.object.matrixWorld.clone() };
 			this.move = smooth_motion;
 		}
@@ -341,6 +353,9 @@
 		
 	<script>
 		function init() {
+		
+			container = $( '#container' );
+			
 			scene = new THREE.Scene();
 			
 			camera = new THREE.PerspectiveCamera( 45, window.innerWidth/window.innerHeight, 0.1, 1000 );
@@ -358,6 +373,11 @@
 			renderer.toneMapping = THREE.ReinhardToneMapping;
 			renderer.setPixelRatio( window.devicePixelRatio );
 			renderer.setSize( window.innerWidth, window.innerHeight );
+			
+			container[0].appendChild( renderer.domElement );
+			stats = new Stats();
+			container[0].appendChild( stats.dom );
+				
 			/*
 			//renderer.physicallyCorrectLights = true;
 			renderer.setClearColor( new THREE.Color(0xEEEEEE) );
@@ -414,7 +434,7 @@
 			bulbLight.castShadow = true;
 			scene.add( bulbLight );
 				
-			var cubeGeometry = new THREE.BoxGeometry( 4, 4, 4 );
+			var cubeGeometry = new THREE.BoxBufferGeometry( 4, 4, 4 );
 			var cubeMaterial = new THREE.MeshLambertMaterial( {color:0xff0000, wireframe:false} );
 			cube = new THREE.Mesh( cubeGeometry, cubeMaterial );
 			cube.position.x = 0;
@@ -423,7 +443,7 @@
 			cube.castShadow = true;
 			scene.add( cube );
 		
-			var sphereGeometry = new THREE.SphereGeometry( 4, 20, 20 );
+			var sphereGeometry = new THREE.SphereBufferGeometry( 4, 20, 20 );
 			var sphereMaterial = new THREE.MeshBasicMaterial( {color:0x7777ff, wireframe:true} );
 			sphere = new THREE.Mesh( sphereGeometry, sphereMaterial );
 			sphere.position.x = -10;
@@ -432,7 +452,7 @@
 			sphere.castShadow = true;
 			scene.add( sphere );
 		
-			var planeGeometry = new THREE.PlaneGeometry( 60, 30, 1, 1 );
+			var planeGeometry = new THREE.PlaneBufferGeometry( 60, 30, 1, 1 );
 			var planeMaterial = new THREE.MeshStandardMaterial( {color: 0xffffff,roughness: 0.8, metalness: 0.2, bumpScale: 0.0005} );
 			var plane = new THREE.Mesh(planeGeometry, planeMaterial);
 			plane.receiveShadow = true;
@@ -450,39 +470,63 @@
 			} );
 			*/
 			
-			var geometry = new THREE.Geometry();
+			var geometry = new THREE.BufferGeometry();
+			var vertices = new Float32Array( [
+				-10, 0, 0,
+				0, 10, 0,
+				10, 0, 0,
+			] );
+			geometry.addAttribute( 'position', new THREE.BufferAttribute(vertices, 3) );
+			/*
 			geometry.vertices.push(
 				new THREE.Vector3( -10, 0, 0 ),
 				new THREE.Vector3( 0, 10, 0 ),
 				new THREE.Vector3( 10, 0, 0 )
 			);
+			*/
 			var material = new THREE.LineBasicMaterial({
 				color: 0x0000ff
 			});
 			var line = new THREE.Line( geometry, material );
 			scene.add( line );
+				
+			var geometry = new THREE.BufferGeometry();
+			var vertices = new Float32Array( [
+				0, 0, 0,
+				0, 15, 0,
+			] );
+			geometry.addAttribute( 'position', new THREE.BufferAttribute(vertices, 3) );
 			
-			
-			var geometry = new THREE.Geometry();
+			/*
 			geometry.vertices.push(
 				new THREE.Vector3( 0, 0, 0 ),
 				new THREE.Vector3( 0, 15, 0 ),
 			);
+			*/
 			var material = new THREE.LineBasicMaterial({
 				color: 0xff00ff
 			});
 			swing_line = new THREE.Line( geometry, material );
 			
 			for ( var i=0; i<100; i++ ) {
-				var geometry = new THREE.Geometry();
+				var geometry = new THREE.BufferGeometry();
+				var vertices = new Float32Array( [
+					0, 0, 0,
+					(Math.random()*2-1)*1, 15, (Math.random()*2-1)*1,
+				] );
+				geometry.addAttribute( 'position', new THREE.BufferAttribute(vertices, 3) );
+				/*
 				geometry.vertices.push(
 					new THREE.Vector3( 0, 0, 0 ),
 					new THREE.Vector3( (Math.random()*2-1)*1, 15, (Math.random()*2-1)*1 ),
 				);
+				*/
 				swing_line.add( new THREE.Line(geometry, material) );
 			}
 			
-
+			var pos = new THREE.Vector3( 10, 0, 0 );
+			wdh_swing_line = new wdh_object( swing_line, pos );
+			
 			$('#WebGL-output')[0].appendChild( renderer.domElement );
 			renderer.render( scene, camera );
 		}	
@@ -495,7 +539,7 @@
 			//console.log( cube.geometry.faces );
 			//return;
 			wdh_cube = new wdh_object( cube );
-			
+		
 			//G = { 'rad':3*Math.PI, 'ut':8, 'r_a':new THREE.Vector3(0,1,0) }
 			//look_around( camera, G );
 			
@@ -549,10 +593,9 @@
 			start_animate_loop( [[wdh_cube, actions_list, 'acts_list']] );
 			*/
 			
-			//shake( wdh_cube, {'move':new THREE.Vector3(20,8,9), 'times':8,'usage_t':1} );
+			//shake( wdh_cube, {'move':new THREE.Vector3(20,8,9), 'times':200,'usage_t':1} );
 			
-			wdh_swing_line = new wdh_object( swing_line );
-			var params = { p:new THREE.Vector3(0,0,0), times:100, max_a:10, usage_t:1 }
+			var params = { p:new THREE.Vector3(0,0,0), times:200, max_a:10, usage_t:1 }
 			swinging( wdh_swing_line, params );
 		} )
 	</script>
